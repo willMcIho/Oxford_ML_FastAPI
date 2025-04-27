@@ -42,6 +42,11 @@ driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
 
 # Initialize FastAPI
 app = FastAPI()
+@app.get("/")
+async def root():
+    return {"message": "Server is live!"}
+
+
 nest_asyncio.apply()
 
 # Enable CORS
