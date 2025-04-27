@@ -6,3 +6,4 @@ pydantic
 nest-asyncio
 neo4j
 python-dotenv
+pandas
