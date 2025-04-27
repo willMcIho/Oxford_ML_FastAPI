@@ -1,0 +1,8 @@
+fastapi
+uvicorn
+openai
+supabase
+pydantic
+nest-asyncio
+neo4j
+python-dotenv
