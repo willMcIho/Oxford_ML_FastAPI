@@ -132,7 +132,55 @@ async def causal_insights():
 
     return {"insights": insights_text}
 
+# Model for graph data
+class GraphResponse(BaseModel):
+    nodes: list
+    edges: list
 
+@app.get("/knowledge-graph", response_model=GraphResponse)
+async def get_knowledge_graph(start_node: str = Query(..., description="Entity to start from")):
+    with driver.session() as session:
+        result = session.run("""
+            MATCH (a {name: $start_node})-[r]->(b)
+            RETURN a.name AS source, type(r) AS relationship, b.name AS target, labels(b) AS labels
+            LIMIT 20
+        """, {"start_node": start_node})
+
+        nodes = set()
+        edges = []
+        for record in result:
+            nodes.add(record["source"])
+            nodes.add(record["target"])
+            edges.append({
+                "source": record["source"],
+                "target": record["target"],
+                "type": record["relationship"]
+            })
+
+    return {"nodes": list(nodes), "edges": edges}
+
+# Expand a node
+@app.get("/knowledge-graph/expand", response_model=GraphResponse)
+async def expand_node(node: str = Query(..., description="Node to expand")):
+    with driver.session() as session:
+        result = session.run("""
+            MATCH (a {name: $node})-[r]->(b)
+            RETURN a.name AS source, type(r) AS relationship, b.name AS target, labels(b) AS labels
+            LIMIT 20
+        """, {"node": node})
+
+        nodes = set()
+        edges = []
+        for record in result:
+            nodes.add(record["source"])
+            nodes.add(record["target"])
+            edges.append({
+                "source": record["source"],
+                "target": record["target"],
+                "type": record["relationship"]
+            })
+
+    return {"nodes": list(nodes), "edges": edges}
 
 # ✅ Optional Health Check Endpoint
 @app.get("/")
