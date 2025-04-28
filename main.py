@@ -85,6 +85,55 @@ async def ask_ai(req: QuestionRequest):
         "causal_path": causal_edges
     }
 
+# Fetch causal graph edges
+@app.get("/causal-graph")
+async def causal_graph():
+    with driver.session() as session:
+        result = session.run("""
+            MATCH (a:CausalLearned)-[r:CAUSES]->(b:CausalLearned)
+            RETURN a.name AS source, b.name AS target
+        """)
+        edges = [{"source": record["source"], "target": record["target"]} for record in result]
+    return {"edges": edges}
+
+# AI reasoning over causal graph
+@app.get("/causal-insights")
+async def causal_insights():
+    # Query causal edges
+    with driver.session() as session:
+        result = session.run("""
+            MATCH (a:CausalLearned)-[r:CAUSES]->(b:CausalLearned)
+            RETURN a.name AS source, b.name AS target
+            LIMIT 10
+        """)
+        edges = [(record["source"], record["target"]) for record in result]
+
+    # Create text for AI reasoning
+    graph_summary = "\n".join([f"- {src} causes {tgt}" for src, tgt in edges])
+
+    prompt = f"""
+    The following causal relationships have been detected in a citizen satisfaction dataset:
+
+    {graph_summary}
+
+    Please summarize the three most important causal factors influencing citizen satisfaction, and suggest interventions policymakers could make to improve outcomes.
+    """
+
+    ai_response = openai_client.chat.completions.create(
+        model="gpt-4",
+        messages=[
+            {"role": "system", "content": "You are a helpful data analyst specialized in public sector service design."},
+            {"role": "user", "content": prompt}
+        ],
+        temperature=0.5
+    )
+
+    insights_text = ai_response.choices[0].message.content
+
+    return {"insights": insights_text}
+
+
+
 # ✅ Optional Health Check Endpoint
 @app.get("/")
 async def root():
