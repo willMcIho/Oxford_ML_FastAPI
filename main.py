@@ -140,13 +140,17 @@ class GraphResponse(BaseModel):
 @app.get("/knowledge-graph")
 async def get_knowledge_graph(start_node: str = Query(..., description="Entity to start from")):
     cypher_query = """
-    MATCH (o:Entity {name: $start_node})<-[:HANDLED_BY]-(c:Case)
-    WITH c LIMIT 25
+    CALL {
+        MATCH (o:Entity {name: $start_node})<-[:HANDLED_BY]-(c:Case)
+        RETURN c LIMIT 25
+    }
     MATCH (c)-[r]->(e)
     RETURN DISTINCT c.name AS source, e.name AS target, type(r) AS type
     UNION
-    MATCH (o:Entity {name: $start_node})<-[:HANDLED_BY]-(c:Case)
-    WITH c LIMIT 25
+    CALL {
+        MATCH (o:Entity {name: $start_node})<-[:HANDLED_BY]-(c:Case)
+        RETURN c, o LIMIT 25
+    }
     RETURN DISTINCT c.name AS source, o.name AS target, 'HANDLED_BY' AS type
     """
 
