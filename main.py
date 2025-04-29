@@ -137,18 +137,25 @@ class GraphResponse(BaseModel):
     nodes: list
     edges: list
 
-@app.get("/knowledge-graph", response_model=GraphResponse)
-async def get_knowledge_graph(start_node: str = Query(..., description="Entity to start from")):
+@app.get("/knowledge-graph")
+async def get_knowledge_graph(start_node: str = Query(...)):
     with driver.session() as session:
         result = session.run("""
-            MATCH (a {name: $start_node})-[r]->(b)
-            RETURN a.name AS source, type(r) AS relationship, b.name AS target, labels(b) AS labels
-            LIMIT 20
+            MATCH (a)-[r]->(b)
+            WHERE a.name = $start_node
+            RETURN a.name AS source, type(r) AS relationship, b.name AS target
+            UNION
+            MATCH (a)-[r]->(b)
+            WHERE b.name = $start_node
+            RETURN a.name AS source, type(r) AS relationship, b.name AS target
+            LIMIT 50
         """, {"start_node": start_node})
+
+        records = list(result)
 
         nodes = set()
         edges = []
-        for record in result:
+        for record in records:
             nodes.add(record["source"])
             nodes.add(record["target"])
             edges.append({
@@ -157,7 +164,7 @@ async def get_knowledge_graph(start_node: str = Query(..., description="Entity t
                 "type": record["relationship"]
             })
 
-    return {"nodes": list(nodes), "edges": edges}
+        return {"nodes": list(nodes), "edges": edges}
 
 # Expand a node
 @app.get("/knowledge-graph/expand", response_model=GraphResponse)
