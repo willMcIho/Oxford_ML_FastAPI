@@ -138,33 +138,38 @@ class GraphResponse(BaseModel):
     edges: list
 
 @app.get("/knowledge-graph")
-async def get_knowledge_graph(start_node: str = Query(...)):
-    with driver.session() as session:
-        result = session.run("""
-            MATCH (a)-[r]->(b)
-            WHERE a.name = $start_node
-            RETURN a.name AS source, type(r) AS relationship, b.name AS target
-            UNION
-            MATCH (a)-[r]->(b)
-            WHERE b.name = $start_node
-            RETURN a.name AS source, type(r) AS relationship, b.name AS target
-            LIMIT 50
-        """, {"start_node": start_node})
+async def get_knowledge_graph(start_node: str = Query(..., description="Entity to start from")):
+    cypher_query = """
+    MATCH (a {name: $start_node})<-[r]-(b)
+    RETURN a.name AS target, b.name AS source, type(r) AS type
+    UNION
+    MATCH (a {name: $start_node})-[r]->(b)
+    RETURN a.name AS source, b.name AS target, type(r) AS type
+    """
 
-        records = list(result)
+    try:
+        with driver.session() as session:
+            result = session.run(cypher_query, start_node=start_node)
+            records = result.data()
 
-        nodes = set()
+        # Extract nodes and edges
+        nodes_set = set()
         edges = []
+
         for record in records:
-            nodes.add(record["source"])
-            nodes.add(record["target"])
+            nodes_set.add(record["source"])
+            nodes_set.add(record["target"])
             edges.append({
                 "source": record["source"],
                 "target": record["target"],
-                "type": record["relationship"]
+                "type": record["type"]
             })
 
-        return {"nodes": list(nodes), "edges": edges}
+        nodes = list(nodes_set)
+        return {"nodes": nodes, "edges": edges}
+
+    except Exception as e:
+        return {"error": str(e)}
 
 # Expand a node
 @app.get("/knowledge-graph/expand", response_model=GraphResponse)
