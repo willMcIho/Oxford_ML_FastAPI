@@ -1,5 +1,5 @@
 # main.py
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, Query, APIRouter
 from pydantic import BaseModel
 import openai
 import pandas as pd
@@ -23,6 +23,9 @@ driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
 
 # ✅ Initialize FastAPI app
 app = FastAPI()
+
+# ✅ Initialize APIRouter app
+router = APIRouter()
 
 # ✅ Enable CORS (Allow frontend like Lovable to connect)
 app.add_middleware(
@@ -109,40 +112,76 @@ async def causal_graph():
     return {"edges": edges}
 
 # AI reasoning over causal graph
-@app.get("/causal-insights")
+@router.get("/causal-insights")
 async def causal_insights():
-    # Query causal edges
+    # Step 1: Retrieve causal edges with labels from Neo4j
     with driver.session() as session:
         result = session.run("""
             MATCH (a:CausalLearned)-[r:CAUSES]->(b:CausalLearned)
-            RETURN a.name AS source, b.name AS target
-            LIMIT 10
+            RETURN a.name AS source, b.name AS target, labels(a) AS source_labels, labels(b) AS target_labels
         """)
-        edges = [(record["source"], record["target"]) for record in result]
+        edges = []
+        for record in result:
+            edges.append({
+                "source": record["source"],
+                "target": record["target"],
+                "source_label": record["source_labels"][-1],
+                "target_label": record["target_labels"][-1]
+            })
 
-    # Create text for AI reasoning
-    graph_summary = "\n".join([f"- {src} causes {tgt}" for src, tgt in edges])
+    # Step 2: Generate explanation for each edge using GPT
+    table_with_reasoning = []
+    for edge in edges:
+        explanation_prompt = (
+            f"In a citizen satisfaction dataset, we observe that {edge['source']} "
+            f"(a {edge['source_label']}) causes {edge['target']} (a {edge['target_label']}). "
+            f"Explain why this might be the case based on public service logic or real-world reasoning."
+        )
+        try:
+            chat_response = openai_client.chat.completions.create(
+                model="gpt-4",
+                messages=[
+                    {"role": "system", "content": "You are a data analyst skilled at interpreting causal graphs in public services."},
+                    {"role": "user", "content": explanation_prompt}
+                ],
+                temperature=0.6
+            )
+            reasoning = chat_response.choices[0].message.content.strip()
+        except Exception as e:
+            reasoning = f"⚠️ Unable to generate explanation: {e}"
 
-    prompt = f"""
-    The following causal relationships have been detected in a citizen satisfaction dataset:
+        table_with_reasoning.append({
+            "source": edge["source"],
+            "target": edge["target"],
+            "reasoning": reasoning
+        })
+
+    # Step 3: Generate summary across the whole graph
+    graph_summary = "\n".join([f"- {row['source']} causes {row['target']}" for row in table_with_reasoning])
+    summary_prompt = f"""
+    You are given the following causal relationships found in a citizen satisfaction dataset:
 
     {graph_summary}
 
-    Please summarize the three most important causal factors influencing citizen satisfaction, and suggest interventions policymakers could make to improve outcomes.
+    Please provide a summary of the three most important causal factors influencing satisfaction, and suggest practical improvements for policymakers.
     """
+    try:
+        summary_response = openai_client.chat.completions.create(
+            model="gpt-4",
+            messages=[
+                {"role": "system", "content": "You are a public service policy advisor analyzing causal data."},
+                {"role": "user", "content": summary_prompt}
+            ],
+            temperature=0.5
+        )
+        summary_text = summary_response.choices[0].message.content.strip()
+    except Exception as e:
+        summary_text = f"⚠️ Summary generation failed: {e}"
 
-    ai_response = openai_client.chat.completions.create(
-        model="gpt-4",
-        messages=[
-            {"role": "system", "content": "You are a helpful data analyst specialized in public sector service design."},
-            {"role": "user", "content": prompt}
-        ],
-        temperature=0.5
-    )
-
-    insights_text = ai_response.choices[0].message.content
-
-    return {"insights": insights_text}
+    return {
+        "summary": summary_text,
+        "explanations": table_with_reasoning
+    }
 
 # Model for graph data
 class GraphResponse(BaseModel):
