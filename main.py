@@ -136,7 +136,7 @@ async def causal_insights():
         )
         try:
             chat_response = openai_client.chat.completions.create(
-                model="gpt-4",
+                model="gpt-3.5-turbo",
                 messages=[
                     {"role": "system", "content": "You are a data analyst skilled at interpreting causal graphs in public services."},
                     {"role": "user", "content": explanation_prompt}
