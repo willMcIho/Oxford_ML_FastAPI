@@ -1,5 +1,5 @@
 # main.py
-from fastapi import FastAPI, Query, APIRouter
+from fastapi import FastAPI, Query
 from pydantic import BaseModel
 import openai
 import pandas as pd
