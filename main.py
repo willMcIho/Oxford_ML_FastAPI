@@ -91,9 +91,21 @@ async def causal_graph():
     with driver.session() as session:
         result = session.run("""
             MATCH (a:CausalLearned)-[r:CAUSES]->(b:CausalLearned)
-            RETURN a.name AS source, b.name AS target
+            RETURN a.name AS source,
+                   b.name AS target,
+                   labels(a) AS source_labels,
+                   labels(b) AS target_labels,
+                   type(r) AS predicate
         """)
-        edges = [{"source": record["source"], "target": record["target"]} for record in result]
+        edges = []
+        for record in result:
+            edges.append({
+                "source": record["source"],
+                "target": record["target"],
+                "predicate": record["predicate"],
+                "source_labels": record["source_labels"],
+                "target_labels": record["target_labels"]
+            })
     return {"edges": edges}
 
 # AI reasoning over causal graph
