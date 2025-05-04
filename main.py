@@ -24,9 +24,6 @@ driver = GraphDatabase.driver(NEO4J_URI, auth=(NEO4J_USER, NEO4J_PASSWORD))
 # ✅ Initialize FastAPI app
 app = FastAPI()
 
-# ✅ Initialize APIRouter app
-router = APIRouter()
-
 # ✅ Enable CORS (Allow frontend like Lovable to connect)
 app.add_middleware(
     CORSMiddleware,
@@ -112,7 +109,7 @@ async def causal_graph():
     return {"edges": edges}
 
 # AI reasoning over causal graph
-@router.get("/causal-insights")
+@app.get("/causal-insights")
 async def causal_insights():
     # Step 1: Retrieve causal edges with labels from Neo4j
     with driver.session() as session:
