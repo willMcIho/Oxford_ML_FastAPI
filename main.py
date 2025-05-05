@@ -200,29 +200,58 @@ class GraphResponse(BaseModel):
 async def get_knowledge_graph(start_node: str = Query(..., description="Entity to start from")):
     try:
         with driver.session() as session:
-            result = session.run("""
-                MATCH (start {name: $start_node})
-                CALL {
-                    WITH start
-                    MATCH (start)<-[r1]-(c:Case)
-                    RETURN r1, c
-                    LIMIT 50
-                }
-                OPTIONAL MATCH (c)-[r2]->(e)
-                WITH COLLECT(DISTINCT start) + COLLECT(DISTINCT c) + COLLECT(DISTINCT e) AS all_nodes,
-                     COLLECT(DISTINCT {source: start.name, target: c.name, type: type(r1)}) +
-                     COLLECT(DISTINCT {source: c.name, target: e.name, type: type(r2)}) AS all_edges
-                UNWIND all_nodes AS n
-                RETURN DISTINCT n.name AS id, labels(n)[0] AS label, head(labels(n)) AS group, all_edges
-            """, {"start_node": start_node})
+            # First, get the label of the node (assumes only 1 label is relevant)
+            label_result = session.run("""
+                MATCH (n {name: $start_node})
+                RETURN head(labels(n)) AS label
+            """, {"start_node": start_node}).single()
 
+            if not label_result:
+                return {"nodes": [], "edges": []}
+
+            node_label = label_result["label"]
+
+            if node_label == "Case":
+                # If it's a Case, get outbound relationships
+                query = """
+                    MATCH (start:Case {name: $start_node})
+                    CALL {
+                        WITH start
+                        MATCH (start)-[r2]->(e)
+                        RETURN r2, e
+                        LIMIT 50
+                    }
+                    WITH COLLECT(DISTINCT start) + COLLECT(DISTINCT e) AS all_nodes,
+                         COLLECT(DISTINCT {source: start.name, target: e.name, type: type(r2)}) AS all_edges
+                    UNWIND all_nodes AS n
+                    RETURN DISTINCT n.name AS id, labels(n)[0] AS label, head(labels(n)) AS group, all_edges
+                """
+            else:
+                # If it's an entity like Officer/Benefit/etc., get inbound Case relationships
+                query = """
+                    MATCH (start {name: $start_node})
+                    CALL {
+                        WITH start
+                        MATCH (start)<-[r1]-(c:Case)
+                        RETURN r1, c
+                        LIMIT 50
+                    }
+                    OPTIONAL MATCH (c)-[r2]->(e)
+                    WITH COLLECT(DISTINCT start) + COLLECT(DISTINCT c) + COLLECT(DISTINCT e) AS all_nodes,
+                         COLLECT(DISTINCT {source: start.name, target: c.name, type: type(r1)}) +
+                         COLLECT(DISTINCT {source: c.name, target: e.name, type: type(r2)}) AS all_edges
+                    UNWIND all_nodes AS n
+                    RETURN DISTINCT n.name AS id, labels(n)[0] AS label, head(labels(n)) AS group, all_edges
+                """
+
+            result = session.run(query, {"start_node": start_node})
             records = result.data()
 
-        # Deduplicate nodes and edges
+        # Build nodes and edges
         nodes = []
         seen_nodes = set()
-        seen_edges = set()
         edges = []
+        seen_edges = set()
 
         for record in records:
             node_id = record["id"]
@@ -236,16 +265,17 @@ async def get_knowledge_graph(start_node: str = Query(..., description="Entity t
 
             for edge in record["all_edges"]:
                 if edge and edge["source"] and edge["target"]:
-                    edge_tuple = (edge["source"], edge["target"], edge["type"])
-                    if edge_tuple not in seen_edges:
-                        seen_edges.add(edge_tuple)
+                    edge_key = (edge["source"], edge["target"], edge["type"])
+                    if edge_key not in seen_edges:
+                        seen_edges.add(edge_key)
                         edges.append(edge)
 
         return {"nodes": nodes, "edges": edges}
 
     except Exception as e:
         return {"error": str(e)}
-        
+
+
 # Expand a node
 @app.get("/knowledge-graph/expand", response_model=GraphResponse)
 async def expand_node(node: str = Query(..., description="Node to expand")):
