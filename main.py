@@ -7,6 +7,7 @@ from supabase import create_client
 from neo4j import GraphDatabase
 from fastapi.middleware.cors import CORSMiddleware
 import os
+from typing import List
 
 # ✅ Load from environment variables
 SUPABASE_URL = os.getenv("SUPABASE_URL")
@@ -109,75 +110,85 @@ async def causal_graph():
     return {"edges": edges}
 
 # AI reasoning over causal graph
-@app.get("/causal-insights")
-async def causal_insights():
-    # Step 1: Retrieve causal edges with labels from Neo4j
+@app.post("/causal-insights")
+async def causal_insights(req: QuestionRequest):
+
+    user_question = req.question
+
+    # Step 1: Fetch causal edges from Neo4j
     with driver.session() as session:
         result = session.run("""
             MATCH (a:CausalLearned)-[r:CAUSES]->(b:CausalLearned)
             RETURN a.name AS source, b.name AS target, labels(a) AS source_labels, labels(b) AS target_labels
         """)
-        edges = []
-        for record in result:
-            edges.append({
+        neo4j_edges = [
+            {
                 "source": record["source"],
                 "target": record["target"],
                 "source_label": record["source_labels"][-1],
                 "target_label": record["target_labels"][-1]
-            })
+            }
+            for record in result
+        ]
 
-    # Step 2: Generate explanation for each edge using GPT
-    table_with_reasoning = []
-    for edge in edges:
-        explanation_prompt = (
-            f"In a citizen satisfaction dataset, we observe that {edge['source']} "
-            f"(a {edge['source_label']}) causes {edge['target']} (a {edge['target_label']}). "
-            f"Explain why this might be the case based on public service logic or real-world reasoning."
+    # Step 2: Fetch reasoning data from Supabase
+    supabase_data = supabase.table("EdgeGraphsReasoning").select("*").execute()
+    if not supabase_data.data:
+        supabase_reasoning = []
+    else:
+        supabase_reasoning = supabase_data.data
+
+    # Step 3: Merge Neo4j edges with Supabase reasoning
+    explanations = []
+    for edge in neo4j_edges:
+        match = next(
+            (r for r in supabase_reasoning if r["source"] == edge["source"] and r["target"] == edge["target"]),
+            None
         )
-        try:
-            chat_response = openai_client.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=[
-                    {"role": "system", "content": "You are a data analyst skilled at interpreting causal graphs in public services."},
-                    {"role": "user", "content": explanation_prompt}
-                ],
-                temperature=0.6
-            )
-            reasoning = chat_response.choices[0].message.content.strip()
-        except Exception as e:
-            reasoning = f"⚠️ Unable to generate explanation: {e}"
-
-        table_with_reasoning.append({
+        explanations.append({
             "source": edge["source"],
             "target": edge["target"],
-            "reasoning": reasoning
+            "source_label": edge["source_label"],
+            "target_label": edge["target_label"],
+            "reasoning": match["reasoning"] if match else "No reasoning found."
         })
 
-    # Step 3: Generate summary across the whole graph
-    graph_summary = "\n".join([f"- {row['source']} causes {row['target']}" for row in table_with_reasoning])
-    summary_prompt = f"""
-    You are given the following causal relationships found in a citizen satisfaction dataset:
+    # Step 4: Prepare prompt
+    formatted_edges = "\n".join([f"- {e['source']} → {e['target']} ({e['source_label']} → {e['target_label']})" for e in explanations])
+    reasoning_blocks = "\n\n".join([f"{e['source']} → {e['target']}: {e['reasoning']}" for e in explanations])
 
-    {graph_summary}
+    prompt = f"""
+You are a public policy analyst. Here are learned causal relationships in a citizen service dataset:
 
-    Please provide a summary of the three most important causal factors influencing satisfaction, and suggest practical improvements for policymakers.
-    """
+Causal Edges:
+{formatted_edges}
+
+Reasoning for these causal relationships:
+{reasoning_blocks}
+
+User Question:
+{user_question}
+
+Please respond with a thoughtful, policy-relevant answer based on the causal graph and explanations above.
+"""
+
     try:
-        summary_response = openai_client.chat.completions.create(
+        chat_response = openai_client.chat.completions.create(
             model="gpt-4",
             messages=[
-                {"role": "system", "content": "You are a public service policy advisor analyzing causal data."},
-                {"role": "user", "content": summary_prompt}
+                {"role": "system", "content": "You are an expert in public sector policy and causal reasoning."},
+                {"role": "user", "content": prompt}
             ],
             temperature=0.5
         )
-        summary_text = summary_response.choices[0].message.content.strip()
+        answer = chat_response.choices[0].message.content.strip()
     except Exception as e:
-        summary_text = f"⚠️ Summary generation failed: {e}"
+        answer = f"⚠️ GPT response failed: {e}"
 
     return {
-        "summary": summary_text,
-        "explanations": table_with_reasoning
+        "question": user_question,
+        "response": answer,
+        "explanations": explanations
     }
 
 # Model for graph data
