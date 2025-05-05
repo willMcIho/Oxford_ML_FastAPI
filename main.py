@@ -197,48 +197,34 @@ class GraphResponse(BaseModel):
     edges: list
 
 @app.get("/knowledge-graph")
-async def get_knowledge_graph(start_node: str = Query(..., description="Name of the node to start from")):
+async def get_knowledge_graph(start_node: str = Query(..., description="Entity to start from")):
     try:
         with driver.session() as session:
-            # Step 1: Determine labels
-            label_result = session.run("""
-                MATCH (n {name: $start_node})
-                RETURN labels(n) AS labels
-                LIMIT 1
-            """, {"start_node": start_node})
-            
-            label_record = label_result.single()
-            if not label_record:
-                return {"error": "Node not found."}
-            
-            labels = label_record["labels"]
-            if not labels:
-                return {"error": "Node has no labels."}
-
-            # Step 2: Query both inbound and outbound edges
-            cypher_query = """
-                MATCH (n {name: $start_node})
-                OPTIONAL MATCH (n)-[r1]->(m1)
-                OPTIONAL MATCH (m2)-[r2]->(n)
-                WITH COLLECT(DISTINCT n) + COLLECT(DISTINCT m1) + COLLECT(DISTINCT m2) AS all_nodes,
-                     COLLECT(DISTINCT {source: n.name, target: m1.name, type: type(r1)}) +
-                     COLLECT(DISTINCT {source: m2.name, target: n.name, type: type(r2)}) AS all_edges
+            result = session.run("""
+                MATCH (start {name: $start_node})
+                WITH start
+                OPTIONAL MATCH (start)<-[r1]-(c:Case)
+                WITH start, c LIMIT 50
+                OPTIONAL MATCH (c)-[r2]->(e)
+                WITH COLLECT(DISTINCT start) + COLLECT(DISTINCT c) + COLLECT(DISTINCT e) AS all_nodes,
+                     COLLECT(DISTINCT {source: start.name, target: c.name, type: type(r1)}) +
+                     COLLECT(DISTINCT {source: c.name, target: e.name, type: type(r2)}) AS all_edges
                 UNWIND all_nodes AS n
-                RETURN DISTINCT n.name AS id, head(labels(n)) AS group, head(labels(n)) AS label, all_edges
-            """
+                RETURN DISTINCT n.name AS id, labels(n)[0] AS label, head(labels(n)) AS group, all_edges
+            """, {"start_node": start_node})
 
-            result = session.run(cypher_query, {"start_node": start_node})
             records = result.data()
 
-        # Step 3: Transform into frontend format
+        # Build nodes and deduplicated edges
         nodes = []
-        seen = set()
+        seen_nodes = set()
+        seen_edges = set()
         edges = []
 
         for record in records:
             node_id = record["id"]
-            if node_id and node_id not in seen:
-                seen.add(node_id)
+            if node_id and node_id not in seen_nodes:
+                seen_nodes.add(node_id)
                 nodes.append({
                     "id": node_id,
                     "label": node_id,
@@ -247,7 +233,10 @@ async def get_knowledge_graph(start_node: str = Query(..., description="Name of 
 
             for edge in record["all_edges"]:
                 if edge and edge["source"] and edge["target"]:
-                    edges.append(edge)
+                    edge_tuple = (edge["source"], edge["target"], edge["type"])
+                    if edge_tuple not in seen_edges:
+                        seen_edges.add(edge_tuple)
+                        edges.append(edge)
 
         return {"nodes": nodes, "edges": edges}
 
