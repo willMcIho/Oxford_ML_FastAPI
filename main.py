@@ -150,7 +150,7 @@ async def causal_insights(req: QuestionRequest):
             "target": edge["target"],
             "source_label": edge["source_label"],
             "target_label": edge["target_label"],
-            "reasoning": match["reasoning"] if match else "No reasoning found."
+            "reasoning": match.get("Reasoning Summary", "No reasoning found.") if match else "No reasoning found."
         })
 
     # Step 4: Prepare prompt
