@@ -202,9 +202,9 @@ async def get_knowledge_graph(start_node: str = Query(..., description="Entity t
         with driver.session() as session:
             result = session.run("""
                 MATCH (start {name: $start_node})
-                WITH start
                 OPTIONAL MATCH (start)<-[r1]-(c:Case)
-                WITH start, c LIMIT 50
+                WITH start, c, r1
+                LIMIT 50
                 OPTIONAL MATCH (c)-[r2]->(e)
                 RETURN 
                     COLLECT(DISTINCT start) + COLLECT(DISTINCT c) + COLLECT(DISTINCT e) AS all_nodes,
@@ -218,7 +218,6 @@ async def get_knowledge_graph(start_node: str = Query(..., description="Entity t
             nodes_raw = result["all_nodes"]
             edges = result["all_edges"]
 
-            # Build nodes with id, label, and group
             nodes = []
             seen_ids = set()
             for node in nodes_raw:
@@ -227,14 +226,14 @@ async def get_knowledge_graph(start_node: str = Query(..., description="Entity t
                     nodes.append({
                         "id": node["name"],
                         "label": node["name"],
-                        "group": node.get("labels", ["Entity"])[0]  # fallback if label not present
+                        "group": node.get("labels", ["Entity"])[0]
                     })
 
             return {"nodes": nodes, "edges": edges}
 
     except Exception as e:
         return {"error": str(e)}
-
+        
 # Expand a node
 @app.get("/knowledge-graph/expand", response_model=GraphResponse)
 async def expand_node(node: str = Query(..., description="Node to expand")):
