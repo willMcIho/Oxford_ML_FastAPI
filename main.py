@@ -197,39 +197,59 @@ class GraphResponse(BaseModel):
     edges: list
 
 @app.get("/knowledge-graph")
-async def get_knowledge_graph(start_node: str = Query(..., description="Entity to start from")):
+async def get_knowledge_graph(start_node: str = Query(..., description="Name of the node to start from")):
     try:
         with driver.session() as session:
-            result = session.run("""
-                MATCH (start {name: $start_node})
-                OPTIONAL MATCH (start)<-[r1]-(c:Case)
-                WITH start, c, r1
-                LIMIT 50
-                OPTIONAL MATCH (c)-[r2]->(e)
-                RETURN 
-                    COLLECT(DISTINCT start) + COLLECT(DISTINCT c) + COLLECT(DISTINCT e) AS all_nodes,
-                    COLLECT(DISTINCT {source: start.name, target: c.name, type: type(r1)}) +
-                    COLLECT(DISTINCT {source: c.name, target: e.name, type: type(r2)}) AS all_edges
-            """, {"start_node": start_node}).single()
+            # Step 1: Determine labels
+            label_result = session.run("""
+                MATCH (n {name: $start_node})
+                RETURN labels(n) AS labels
+                LIMIT 1
+            """, {"start_node": start_node})
+            
+            label_record = label_result.single()
+            if not label_record:
+                return {"error": "Node not found."}
+            
+            labels = label_record["labels"]
+            if not labels:
+                return {"error": "Node has no labels."}
 
-            if not result:
-                return {"nodes": [], "edges": []}
+            # Step 2: Query both inbound and outbound edges
+            cypher_query = """
+                MATCH (n {name: $start_node})
+                OPTIONAL MATCH (n)-[r1]->(m1)
+                OPTIONAL MATCH (m2)-[r2]->(n)
+                WITH COLLECT(DISTINCT n) + COLLECT(DISTINCT m1) + COLLECT(DISTINCT m2) AS all_nodes,
+                     COLLECT(DISTINCT {source: n.name, target: m1.name, type: type(r1)}) +
+                     COLLECT(DISTINCT {source: m2.name, target: n.name, type: type(r2)}) AS all_edges
+                UNWIND all_nodes AS n
+                RETURN DISTINCT n.name AS id, head(labels(n)) AS group, head(labels(n)) AS label, all_edges
+            """
 
-            nodes_raw = result["all_nodes"]
-            edges = result["all_edges"]
+            result = session.run(cypher_query, {"start_node": start_node})
+            records = result.data()
 
-            nodes = []
-            seen_ids = set()
-            for node in nodes_raw:
-                if node and "name" in node and node["name"] not in seen_ids:
-                    seen_ids.add(node["name"])
-                    nodes.append({
-                        "id": node["name"],
-                        "label": node["name"],
-                        "group": node.get("labels", ["Entity"])[0]
-                    })
+        # Step 3: Transform into frontend format
+        nodes = []
+        seen = set()
+        edges = []
 
-            return {"nodes": nodes, "edges": edges}
+        for record in records:
+            node_id = record["id"]
+            if node_id and node_id not in seen:
+                seen.add(node_id)
+                nodes.append({
+                    "id": node_id,
+                    "label": node_id,
+                    "group": record["group"]
+                })
+
+            for edge in record["all_edges"]:
+                if edge and edge["source"] and edge["target"]:
+                    edges.append(edge)
+
+        return {"nodes": nodes, "edges": edges}
 
     except Exception as e:
         return {"error": str(e)}
