@@ -142,7 +142,7 @@ async def causal_insights(req: QuestionRequest):
     explanations = []
     for edge in neo4j_edges:
         match = next(
-            (r for r in supabase_reasoning if r["source"] == edge["source"] and r["target"] == edge["target"]),
+            (r for r in supabase_reasoning if r.get("Source") == edge["source"] and r.get("Target") == edge["target"]),
             None
         )
         explanations.append({
