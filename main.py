@@ -202,9 +202,12 @@ async def get_knowledge_graph(start_node: str = Query(..., description="Entity t
         with driver.session() as session:
             result = session.run("""
                 MATCH (start {name: $start_node})
-                WITH start
-                OPTIONAL MATCH (start)<-[r1]-(c:Case)
-                WITH start, c LIMIT 50
+                CALL {
+                    WITH start
+                    MATCH (start)<-[r1]-(c:Case)
+                    RETURN r1, c
+                    LIMIT 50
+                }
                 OPTIONAL MATCH (c)-[r2]->(e)
                 WITH COLLECT(DISTINCT start) + COLLECT(DISTINCT c) + COLLECT(DISTINCT e) AS all_nodes,
                      COLLECT(DISTINCT {source: start.name, target: c.name, type: type(r1)}) +
@@ -215,7 +218,7 @@ async def get_knowledge_graph(start_node: str = Query(..., description="Entity t
 
             records = result.data()
 
-        # Build nodes and deduplicated edges
+        # Deduplicate nodes and edges
         nodes = []
         seen_nodes = set()
         seen_edges = set()
