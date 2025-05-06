@@ -48,42 +48,121 @@ def find_causal_path():
         """)
         return [(record["source"], record["target"]) for record in result]
 
+ENTITY_KEYWORDS = {
+    "officer": "Officer",
+    "region":  "Region",
+    "benefit": "BenefitType",
+    "case":    "Case",
+    "month":   "Month",
+    "disability": "DisabilityStatus",
+    "satisfaction": "Satisfaction"
+}
+
+def detect_entity_types(question: str):
+    q = question.lower()
+    found = set()
+    for kw, label in ENTITY_KEYWORDS.items():
+        if kw in q:
+            found.add(label)
+    return list(found)
+
+def fetch_context(label: str):
+    if label == "Officer":
+        cypher = """
+          MATCH (o:Officer)<-[:HANDLED_BY]-(c:Case)
+          RETURN o.name AS entity, count(c) AS volume
+          ORDER BY volume DESC
+          LIMIT 3
+        """
+    elif label == "Region":
+        cypher = """
+          MATCH (r:Region)<-[:OCCURS_IN]-(c:Case)
+          RETURN r.name AS entity, count(c) AS volume
+          ORDER BY volume DESC
+          LIMIT 3
+        """
+    elif label == "BenefitType":
+        cypher = """
+          MATCH (b:BenefitType)<-[:APPLIES_TO]-(c:Case)
+          RETURN b.name AS entity, count(c) AS volume
+          ORDER BY volume DESC
+          LIMIT 3
+        """
+    # …and so on for Month, DisabilityStatus, Case (recent cases?), Satisfaction (distribution)
+    else:
+        return []
+
+    rows = session.run(cypher).data()
+    return rows
+
+
 # ✅ Main Reasoning Endpoint
 @app.post("/ask-ai")
 async def ask_ai(req: QuestionRequest):
-    user_question = req.question
+    q = req.question
 
-    # Find causal path
+    # 1. Detect which entity types to contextualize
+    types = detect_entity_types(q)  # e.g. ["Officer","Region"]
+
+    # 2. Fetch 1–3 context rows per type
+    context_snippets = []
+    for t in types:
+        rows = fetch_context(t)
+        if rows:
+            snippet = f"Top {t}s by case volume:\n" + \
+                      "\n".join([f"- {r['entity']}: {r['volume']} cases" for r in rows])
+            context_snippets.append(snippet)
+
+    # 3. Causal paths (unchanged)
     causal_edges = find_causal_path()
-    causal_summary = " -> ".join([f"{src} -> {tgt}" for src, tgt in causal_edges]) if causal_edges else "No causal path found."
+    causal_summary = "\n".join([f"- {s} → {t}" for s,t in causal_edges])
 
-    # Create enhanced prompt
-    full_prompt = f"""
-    A user asked the following question about citizen satisfaction:
+    # 4. Global aggregates (unchanged)
+    df = pd.DataFrame(…)
+    avg_res = df["ResolutionTime"].mean()
+    sat_dist = df["Satisfaction"].value_counts(normalize=True).round(2).to_dict()
+    sat_summary = ", ".join([f"{k}: {v*100:.0f}%" for k,v in sat_dist.items()])
 
-    '{user_question}'
+    # 5. Build the prompt
+    prompt = f"""
+A user asked:
+“{q}”
 
-    Based on the following learned causal paths:
-    {causal_summary}
+=== Learned Causal Paths ===
+{causal_summary}
 
-    Please generate a helpful, clear explanation.
+=== Dataset Metrics ===
+• Avg. Resolution Time: {avg_res:.1f} days  
+• Satisfaction Distribution: {sat_summary}
+
+"""
+
+    if context_snippets:
+        prompt += "\n".join([f"=== {s} ===\n{snippet}\n"
+                             for s, snippet in zip(types, context_snippets)])
+
+    prompt += """
+Please provide a concise, actionable answer grounded in the above.
     """
 
-    # Generate AI Response
-    ai_response = openai_client.chat.completions.create(
+    # 6. Call OpenAI
+    openai_resp = openai_client.chat.completions.create(
         model="gpt-4",
         messages=[
-            {"role": "system", "content": "You are a helpful public service reasoning expert specializing in citizen satisfaction analysis."},
-            {"role": "user", "content": full_prompt}
+            {"role":"system","content":"You are an expert public-service analyst."},
+            {"role":"user","content":prompt}
         ],
         temperature=0.5
     )
 
-    answer_text = ai_response.choices[0].message.content
+    answer = openai_resp.choices[0].message.content.strip()
 
     return {
-        "answer": answer_text,
-        "causal_path": causal_edges
+        "question": q,
+        "entity_context": context_snippets,
+        "causal_paths": causal_edges,
+        "dataset_metrics": {"avg_resolution": avg_res, "sat_dist": sat_dist},
+        "answer": answer
     }
 
 # Fetch causal graph edges
