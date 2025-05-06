@@ -118,7 +118,10 @@ async def ask_ai(req: QuestionRequest):
     causal_summary = "\n".join([f"- {s} → {t}" for s,t in causal_edges])
 
     # 4. Global aggregates (unchanged)
-    df = pd.DataFrame(…)
+    response = supabase.table("Cases") \
+    .select("ResolutionTime, Satisfaction") \
+    .execute()
+
     avg_res = df["ResolutionTime"].mean()
     sat_dist = df["Satisfaction"].value_counts(normalize=True).round(2).to_dict()
     sat_summary = ", ".join([f"{k}: {v*100:.0f}%" for k,v in sat_dist.items()])
