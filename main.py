@@ -101,10 +101,10 @@ def fetch_context(label: str):
 async def ask_ai(req: QuestionRequest):
     q = req.question
 
-    # 1. Detect which entity types to contextualize
+    # 1. Detect entity types
     types = detect_entity_types(q)  # e.g. ["Officer","Region"]
 
-    # 2. Fetch 1–3 context rows per type
+    # 2. Fetch context snippets
     context_snippets = []
     for t in types:
         rows = fetch_context(t)
@@ -113,22 +113,67 @@ async def ask_ai(req: QuestionRequest):
                       "\n".join([f"- {r['entity']}: {r['volume']} cases" for r in rows])
             context_snippets.append(snippet)
 
-    # 3. Causal paths (unchanged)
+    # 3. Causal path summary
     causal_edges = find_causal_path()
-    causal_summary = "\n".join([f"- {s} → {t}" for s,t in causal_edges])
+    causal_summary = "\n".join([f"- {s} → {t}" for s, t in causal_edges])
 
-    # 4. Global aggregates (unchanged)
+    # 4. Pull case data
     response = supabase.table("Cases") \
-    .select("ResolutionTime, Satisfaction") \
-    .execute()
-
+        .select("ResolutionTime, Satisfaction, RequestMonth, Region, Officer, Disability") \
+        .execute()
     df = pd.DataFrame(response.data)
 
+    # 5. Compute enhanced metrics
     avg_res = df["ResolutionTime"].mean()
+    med_res = df["ResolutionTime"].median()
+    p90_res = df["ResolutionTime"].quantile(0.9)
     sat_dist = df["Satisfaction"].value_counts(normalize=True).round(2).to_dict()
-    sat_summary = ", ".join([f"{k}: {v*100:.0f}%" for k,v in sat_dist.items()])
 
-    # 5. Build the prompt
+    monthly = df.groupby("RequestMonth")["ResolutionTime"].mean().round(1).to_dict()
+    region_times = df.groupby("Region")["ResolutionTime"].mean().round(1).to_dict()
+    disability_sat = (
+        df.groupby("Disability")["Satisfaction"]
+        .value_counts(normalize=True).unstack().round(2).to_dict()
+    )
+    region_sat = (
+        df.groupby("Region")["Satisfaction"]
+        .value_counts(normalize=True).unstack().round(2).to_dict()
+    )
+    officer_means = df.groupby("Officer")["ResolutionTime"].mean()
+    top_q, bot_q = officer_means.quantile([0.75, 0.25])
+    equity_gap = round(top_q - bot_q, 1)
+    disability_res = df.groupby("Disability")["ResolutionTime"].mean().round(1).to_dict()
+
+    # 6. Build the metrics text block
+    metrics_block = f"""
+=== Overall Metrics ===
+• Avg. resolution: {avg_res:.1f} days  
+• Median resolution: {med_res:.1f} days  
+• 90th pctile resolution: {p90_res:.1f} days  
+• Satisfaction distribution: {', '.join(f'{k}: {v*100:.0f}%' for k,v in sat_dist.items())}
+
+=== Monthly Resolution Trends ===
+{"; ".join(f'{m}: {d:.1f}d' for m,d in monthly.items())}
+
+=== Officer Equity ===
+• 75th pctile officer res time: {top_q:.1f}d  
+• 25th pctile officer res time: {bot_q:.1f}d  
+• Equity gap: {equity_gap:.1f} days
+
+=== Avg ResolutionTime by Region ===
+{"; ".join(f'{k}: {v}d' for k,v in region_times.items())}
+
+=== Satisfaction by Disability ===
+{"; ".join(f'{k}: ' + ', '.join(f'{s}={v*100:.0f}%' for s,v in sv.items()) for k,sv in disability_sat.items())}
+
+=== Satisfaction by Region ===
+{"; ".join(f'{k}: ' + ', '.join(f'{s}={v*100:.0f}%' for s,v in sv.items()) for k,sv in region_sat.items())}
+
+=== Avg ResolutionTime by Disability ===
+{"; ".join(f'{k}: {v}d' for k,v in disability_res.items())}
+"""
+
+    # 7. Build the final prompt
     prompt = f"""
 A user asked:
 “{q}”
@@ -137,8 +182,7 @@ A user asked:
 {causal_summary}
 
 === Dataset Metrics ===
-• Avg. Resolution Time: {avg_res:.1f} days  
-• Satisfaction Distribution: {sat_summary}
+{metrics_block}
 
 """
 
@@ -146,16 +190,14 @@ A user asked:
         prompt += "\n".join([f"=== {s} ===\n{snippet}\n"
                              for s, snippet in zip(types, context_snippets)])
 
-    prompt += """
-Please provide a concise, actionable answer grounded in the above.
-    """
+    prompt += "\nPlease provide a concise, actionable answer grounded in the above.\n"
 
-    # 6. Call OpenAI
+    # 8. Generate answer
     openai_resp = openai_client.chat.completions.create(
         model="gpt-4",
         messages=[
-            {"role":"system","content":"You are an expert public-service analyst."},
-            {"role":"user","content":prompt}
+            {"role": "system", "content": "You are an expert public-service analyst."},
+            {"role": "user", "content": prompt}
         ],
         temperature=0.5
     )
@@ -166,7 +208,18 @@ Please provide a concise, actionable answer grounded in the above.
         "question": q,
         "entity_context": context_snippets,
         "causal_paths": causal_edges,
-        "dataset_metrics": {"avg_resolution": avg_res, "sat_dist": sat_dist},
+        "dataset_metrics": {
+            "avg_resolution": avg_res,
+            "median_resolution": med_res,
+            "p90_resolution": p90_res,
+            "satisfaction_distribution": sat_dist,
+            "monthly_avg_resolution": monthly,
+            "region_avg_resolution": region_times,
+            "region_satisfaction": region_sat,
+            "disability_avg_resolution": disability_res,
+            "disability_satisfaction": disability_sat,
+            "officer_equity_gap": equity_gap
+        },
         "answer": answer
     }
 
