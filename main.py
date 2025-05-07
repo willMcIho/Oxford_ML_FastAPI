@@ -119,7 +119,7 @@ async def ask_ai(req: QuestionRequest):
 
     # 4. Pull case data
     response = supabase.table("Cases") \
-        .select("ResolutionTime, Satisfaction, RequestMonth, Region, Officer, Disability") \
+        .select("ResolutionTime, Satisfaction, RequestDate, Region, Officer, Disability") \
         .execute()
     df = pd.DataFrame(response.data)
 
