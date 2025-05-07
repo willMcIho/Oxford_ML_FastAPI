@@ -123,6 +123,12 @@ async def ask_ai(req: QuestionRequest):
         .execute()
     df = pd.DataFrame(response.data)
 
+    # Ensure RequestDate is in datetime format
+    df["RequestDate"] = pd.to_datetime(df["RequestDate"], errors="coerce")
+
+    # Derive RequestMonth as full month name (e.g., "January")
+    df["RequestMonth"] = df["RequestDate"].dt.strftime('%B')
+
     # 5. Compute enhanced metrics
     avg_res = df["ResolutionTime"].mean()
     med_res = df["ResolutionTime"].median()
