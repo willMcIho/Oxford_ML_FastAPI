@@ -211,6 +211,8 @@ A user asked:
           "• Provide numbered recommendations.\n"
           "• Where relevant, reference specific benefit lines (e.g. PIP, UC).\n"
           "• Output in **Markdown** with sections: Summary ▶ Analysis ▶ Recommendations."
+          "When answering, first lay out your reasoning as clear bullet points "
+          "(prefix them with ⚙️), then present the final answer under **Recommendations**."  
         )
       },
     
@@ -228,15 +230,18 @@ A user asked:
     ]
 
     # 8. Generate answer
-    openai_resp = openai_client.chat.completions.create(
-        model="gpt-4o",                # or gpt-4o-mini / gpt-4-0125-preview
-        temperature=0.45,
-        top_p=0.9,
-        presence_penalty=0.2,
-        messages=messages
-    )
-
-    answer = openai_resp.choices[0].message.content.strip()
+    try:
+        openai_resp = openai_client.chat.completions.create(
+            model="gpt-4o",                # or gpt-4o-mini / gpt-4-0125-preview
+            temperature=0.45,
+            top_p=0.9,
+            presence_penalty=0.2,
+            messages=messages
+        )
+        answer = openai_resp.choices[0].message.content.strip()
+    except openai.OpenAIError as e:
+        # Covers rate limits, auth errors, timeouts…
+        answer = f"⚠️ GPT response failed: {e}"
 
     return {
         "question": q,
@@ -356,6 +361,8 @@ Please respond with a thoughtful, policy-relevant answer based on the causal gra
           "• Provide numbered recommendations.\n"
           "• Where relevant, reference specific benefit lines (e.g. PIP, UC).\n"
           "• Output in **Markdown** with sections: Summary ▶ Analysis ▶ Recommendations."
+          "• When answering, first lay out your reasoning as clear bullet points "
+          "• (prefix them with ⚙️), then present the final answer under **Recommendations**."  
         )
       },
     
@@ -373,15 +380,15 @@ Please respond with a thoughtful, policy-relevant answer based on the causal gra
     ]
 
     # 8. Generate answer
-    openai_resp = openai_client.chat.completions.create(
-        model="gpt-4o",                # or gpt-4o-mini / gpt-4-0125-preview
-        temperature=0.45,
-        top_p=0.9,
-        presence_penalty=0.2,
-        messages=messages
-    )
-
-    answer = openai_resp.choices[0].message.content.strip()
+    try:
+        openai_resp = openai_client.chat.completions.create(
+            model="gpt-4o",                # or gpt-4o-mini / gpt-4-0125-preview
+            temperature=0.45,
+            top_p=0.9,
+            presence_penalty=0.2,
+            messages=messages
+        )
+        answer = openai_resp.choices[0].message.content.strip()
     except Exception as e:
         answer = f"⚠️ GPT response failed: {e}"
 
