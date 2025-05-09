@@ -198,14 +198,42 @@ A user asked:
 
     prompt += "\nPlease provide a concise, actionable answer grounded in the above.\n"
 
+    # 8. Create message structure
+    messages=[
+      # System role clarifies persona, style guidelines, and domain context  
+      {
+        "role": "system",
+        "content": (
+          "You are an expert public-service analyst specialising in UK Department "
+          "for Work and Pensions (DWP) operations, benefit policy, and process improvement. "
+          "• Use evidence-based reasoning.\n"
+          "• Cite data from the prompt (aggregates, causal edges) explicitly.\n"
+          "• Provide numbered recommendations.\n"
+          "• Where relevant, reference specific benefit lines (e.g. PIP, UC).\n"
+          "• Output in **Markdown** with sections: Summary ▶ Analysis ▶ Recommendations."
+        )
+      },
+    
+      # Optional “assistant” priming: shows the answer style you expect
+      {
+        "role": "assistant",
+        "content": (
+          "Understood. I will provide structured, evidence-backed insights with "
+          "clear UK context. Ready for the user question."
+        )
+      },
+    
+      # User question and your assembled prompt block  
+      {"role": "user", "content": prompt},
+    ]
+
     # 8. Generate answer
     openai_resp = openai_client.chat.completions.create(
-        model="gpt-4",
-        messages=[
-            {"role": "system", "content": "You are an expert public-service analyst."},
-            {"role": "user", "content": prompt}
-        ],
-        temperature=0.5
+        model="gpt-4o",                # or gpt-4o-mini / gpt-4-0125-preview
+        temperature=0.45,
+        top_p=0.9,
+        presence_penalty=0.2,
+        messages=messages
     )
 
     answer = openai_resp.choices[0].message.content.strip()
@@ -315,16 +343,45 @@ User Question:
 Please respond with a thoughtful, policy-relevant answer based on the causal graph and explanations above.
 """
 
-    try:
-        chat_response = openai_client.chat.completions.create(
-            model="gpt-4",
-            messages=[
-                {"role": "system", "content": "You are an expert in public sector policy and causal reasoning."},
-                {"role": "user", "content": prompt}
-            ],
-            temperature=0.5
+# 5. Create message structure
+    messages=[
+      # System role clarifies persona, style guidelines, and domain context  
+      {
+        "role": "system",
+        "content": (
+          "You are an expert public-service analyst specialising in UK Department "
+          "for Work and Pensions (DWP) operations, benefit policy, and process improvement. "
+          "• Use evidence-based reasoning.\n"
+          "• Cite data from the prompt (aggregates, causal edges) explicitly.\n"
+          "• Provide numbered recommendations.\n"
+          "• Where relevant, reference specific benefit lines (e.g. PIP, UC).\n"
+          "• Output in **Markdown** with sections: Summary ▶ Analysis ▶ Recommendations."
         )
-        answer = chat_response.choices[0].message.content.strip()
+      },
+    
+      # Optional “assistant” priming: shows the answer style you expect
+      {
+        "role": "assistant",
+        "content": (
+          "Understood. I will provide structured, evidence-backed insights with "
+          "clear UK context. Ready for the user question."
+        )
+      },
+    
+      # User question and your assembled prompt block  
+      {"role": "user", "content": prompt},
+    ]
+
+    # 8. Generate answer
+    openai_resp = openai_client.chat.completions.create(
+        model="gpt-4o",                # or gpt-4o-mini / gpt-4-0125-preview
+        temperature=0.45,
+        top_p=0.9,
+        presence_penalty=0.2,
+        messages=messages
+    )
+
+    answer = openai_resp.choices[0].message.content.strip()
     except Exception as e:
         answer = f"⚠️ GPT response failed: {e}"
 
